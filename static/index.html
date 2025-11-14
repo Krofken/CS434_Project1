@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Speed Testing Tool</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 1.5rem;
+        }
+
+        h1 {
+            margin: 0.5rem 0 1rem;
+            color: #58a6ff;
+        }
+
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        label {
+            font-size: 14px;
+        }
+
+        select {
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            background: #161b22;
+            color: #e6edf3;
+        }
+
+        button {
+            background: #238636;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 4px;
+        }
+
+            button:disabled {
+                background: #30363d;
+                cursor: not-allowed;
+            }
+
+        .section {
+            margin-top: 20px;
+            width: 320px;
+            text-align: center;
+        }
+
+            .section h3 {
+                margin-bottom: 6px;
+            }
+
+        .progress-bar {
+            height: 10px;
+            width: 100%;
+            background: #30363d;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+
+        .progress {
+            height: 100%;
+            width: 0%;
+            background: #58a6ff;
+            transition: width 0.1s linear;
+        }
+
+        .results {
+            margin-top: 4px;
+            text-align: left;
+            background: #161b22;
+            padding: 8px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.4;
+            min-height: 1.2em;
+        }
+
+        .summary {
+            margin-top: 16px;
+            font-size: 13px;
+            background: #161b22;
+            padding: 8px;
+            border-radius: 8px;
+            width: 320px;
+        }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <label>
+            Test Size:
+            <select id="sizeSelect">
+                <option value="0.5">0.5 MB</option>
+                <option value="1">1 MB</option>
+                <option value="2">2 MB</option>
+                <option value="5">5 MB</option>
+                <option value="10">10 MB</option>
+                <option value="50">50 MB</option>
+                <option value="100" selected>100 MB</option>
+            </select>
+
+        </label>
+    </div>
+
+    <h1>Speed Testing Tool</h1>
+    <button id="startBtn">Start Test</button>
+
+    <div class="section">
+        <h3>Ping</h3>
+        <div class="progress-bar"><div class="progress" id="pingProgress"></div></div>
+        <div class="results" id="pingResult">Waiting...</div>
+    </div>
+
+    <div class="section">
+        <h3>Download</h3>
+        <div class="progress-bar"><div class="progress" id="downloadProgress"></div></div>
+        <div class="results" id="downloadResult">Waiting...</div>
+    </div>
+
+    <div class="section">
+        <h3>Upload</h3>
+        <div class="progress-bar"><div class="progress" id="uploadProgress"></div></div>
+        <div class="results" id="uploadResult">Waiting...</div>
+    </div>
+
+    <div class="summary" id="summaryBox">
+        Total data used: 0.00 MB (down) + 0.00 MB (up)
+    </div>
+
+    <script>
+    // Backend URL. For local dev, this is fine. In the cloud, change host.
+    const serverBase = "http://localhost:5000";
+
+    const startBtn    = document.getElementById("startBtn");
+    const sizeSelect  = document.getElementById("sizeSelect");
+
+    const pingRes     = document.getElementById("pingResult");
+    const pingProg    = document.getElementById("pingProgress");
+    const downRes     = document.getElementById("downloadResult");
+    const downProg    = document.getElementById("downloadProgress");
+    const upRes       = document.getElementById("uploadResult");
+    const upProg      = document.getElementById("uploadProgress");
+    const summaryBox  = document.getElementById("summaryBox");
+
+    function updateProgress(elem, val) {
+      elem.style.width = Math.max(0, Math.min(100, val)) + "%";
+    }
+
+    function formatMbps(bytes, seconds) {
+      if (seconds <= 0) return "0.00";
+      return ((bytes * 8) / seconds / 1e6).toFixed(2);
+    }
+
+    function formatMB(bytes) {
+      return (bytes / 1e6).toFixed(2);
+    }
+
+    async function testPing() {
+      pingRes.textContent = "Testing...";
+      updateProgress(pingProg, 30);
+      const t0 = performance.now();
+      const resp = await fetch(`${serverBase}/ping`, { cache: "no-store" });
+      const t1 = performance.now();
+      if (!resp.ok) throw new Error("Ping failed");
+      const rtt = t1 - t0;
+      updateProgress(pingProg, 100);
+      pingRes.textContent = `Ping: ${rtt.toFixed(2)} ms`;
+      return rtt;
+    }
+
+    async function testDownload(sizeMB) {
+      downRes.textContent = `Downloading ${sizeMB} MB...`;
+      updateProgress(downProg, 0);
+
+      const url = `${serverBase}/download?size_mb=${sizeMB}`;
+      const t0 = performance.now();
+      const resp = await fetch(url, { cache: "no-store" });
+      if (!resp.ok || !resp.body) throw new Error("Download failed");
+
+      const reader = resp.body.getReader();
+      let bytes = 0;
+      const total = parseInt(resp.headers.get("Content-Length")) || (sizeMB * 1024 * 1024);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        const pct = (bytes / total) * 100;
+        updateProgress(downProg, Math.min(pct, 100));
+      }
+
+      const t1 = performance.now();
+      const seconds = (t1 - t0) / 1000;
+      const mbps = formatMbps(bytes, seconds);
+
+      downRes.textContent =
+        `Download: ${mbps} Mbps (${formatMB(bytes)} MB in ${seconds.toFixed(2)} s)`;
+
+      return { mbps: parseFloat(mbps), bytes, seconds };
+    }
+
+    async function testUpload(sizeMB) {
+      upRes.textContent = `Uploading ${sizeMB} MB...`;
+      updateProgress(upProg, 10);
+
+      const totalBytes = Math.floor(sizeMB * 1024 * 1024);
+      const data = new Uint8Array(totalBytes); // zero-filled
+
+      const t0 = performance.now();
+      const resp = await fetch(`${serverBase}/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: data
+      });
+      const t1 = performance.now();
+      if (!resp.ok) throw new Error("Upload failed");
+
+      const seconds = (t1 - t0) / 1000;
+      const mbps = formatMbps(totalBytes, seconds);
+      updateProgress(upProg, 100);
+
+      const json = await resp.json(); // server stats, if you want to show them
+
+      upRes.textContent =
+        `Upload: ${mbps} Mbps (${formatMB(totalBytes)} MB in ${seconds.toFixed(2)} s)`;
+
+      return { mbps: parseFloat(mbps), bytes: totalBytes, seconds, server: json };
+    }
+
+    async function runTests() {
+      startBtn.disabled = true;
+      startBtn.textContent = "Running�";
+
+      pingRes.textContent = downRes.textContent = upRes.textContent = "Waiting...";
+      updateProgress(pingProg, 0);
+      updateProgress(downProg, 0);
+      updateProgress(upProg, 0);
+      summaryBox.textContent = "Total data used: 0.00 MB (down) + 0.00 MB (up)";
+
+      const sizeMB = parseFloat(sizeSelect.value);
+
+      try {
+        const t0 = performance.now();
+
+        await testPing();
+        const down = await testDownload(sizeMB);
+        const up   = await testUpload(sizeMB);
+
+        const totalDownMB = down.bytes / 1e6;
+        const totalUpMB   = up.bytes / 1e6;
+        const elapsed = (performance.now() - t0) / 1000;
+
+        summaryBox.textContent =
+          `Total data used: ${totalDownMB.toFixed(2)} MB (down) + ` +
+          `${totalUpMB.toFixed(2)} MB (up) � Total time: ${elapsed.toFixed(2)} s`;
+
+        startBtn.textContent = "Run Again";
+      } catch (err) {
+        console.error(err);
+        alert("Error: " + err.message);
+        startBtn.textContent = "Start Test";
+      } finally {
+        startBtn.disabled = false;
+      }
+    }
+
+    startBtn.addEventListener("click", runTests);
+    </script>
+</body>
+</html>
